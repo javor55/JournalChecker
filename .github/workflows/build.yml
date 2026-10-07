@@ -1,0 +1,38 @@
+name: Build Windows exe
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tools
+        run: python -m pip install --upgrade pip pyinstaller tkinterdnd2
+
+      - name: Build JournalChecker.exe
+        run: python -m PyInstaller --noconfirm --onefile --windowed --name JournalChecker --collect-all tkinterdnd2 journal_checker.py
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: JournalChecker-exe
+          path: dist/JournalChecker.exe
+
+      - name: Attach exe to GitHub release (tags v*)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/JournalChecker.exe

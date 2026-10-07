@@ -18,7 +18,10 @@ from datetime import datetime
 from itertools import permutations
 
 APP_NAME = "JournalChecker"
-APP_VERSION = "1.2"
+APP_VERSION = "1.3"
+
+# Result - Reference larger than this multiple of RMSE is highlighted
+OUTLIER_FACTOR = 2.5
 
 # Columns that are never reference parameters
 NON_PARAM_COLUMNS = {"product", "composition", "recipe", "images", "begin", "end"}
@@ -249,6 +252,14 @@ class Journal:
             "max": max(checked_vals) if checked_vals else None,
         }
 
+    def residual_rmse(self, param):
+        """RMSE of Result - Reference over checked records (None if too few)."""
+        d = [r.result[param] - r.ref[param] for r in self.records
+             if r.check and r.ref[param] is not None and r.result.get(param) is not None]
+        if len(d) < 5:
+            return None
+        return math.sqrt(sum(x * x for x in d) / len(d))
+
     def checked_values(self, param):
         return [r.ref[param] for r in self.records if r.ref[param] is not None and r.check]
 
@@ -263,6 +274,24 @@ class Journal:
         out = [r for r in self.records if not r.has_any_ref]
         out.sort(key=lambda r: r.date or datetime.min, reverse=True)
         return out
+
+
+def system_decimal_separator():
+    """Decimal separator of the user's Windows regional settings ('.' or ',')."""
+    try:
+        import locale
+        locale.setlocale(locale.LC_NUMERIC, "")
+        return locale.localeconv().get("decimal_point") or "."
+    except Exception:
+        return "."
+
+
+def localize_cell(value, decimal_sep):
+    """Use the system decimal separator for numbers so Excel reads them as numbers."""
+    text = str(value)
+    if decimal_sep != "." and "." in text and parse_float(text) is not None:
+        return text.replace(".", decimal_sep)
+    return text
 
 
 def nice_step(x):
@@ -353,6 +382,76 @@ def run_gui(initial_file=None):
         "marker": "#c4314b",
     }
 
+    HELP = {
+        "Parameter": "Reference parameter found in the file. Select it to show its analysis below.",
+        "New value": "Value of the new sample - the lab Reference, or its Result as an estimate.",
+        "± Tolerance": "Records with Reference within New value ± Tolerance count as similar. "
+                       "Saved per parameter.",
+        "Reference range (checked)": "Lowest and highest Reference among records with Check = True.",
+        "In file": "All records in the loaded file.",
+        "Checked": "Records with a Reference value and Check = True (used in the calibration).",
+        "Unchecked": "Records with a Reference value and Check = False (not used in the calibration).",
+        "No Reference": "Records without a Reference value for this parameter.",
+        "Similar checked": "Records with Check = True and Reference within New value ± Tolerance.",
+        "Similar unchecked": "Records with Check = False and Reference within New value ± Tolerance.",
+        "ROW": "Row number from the journal (ROW column).",
+        "Date": "Measurement date and time.",
+        "Check": "True = record is used in the calibration.",
+        "Use": "Use column from the journal (CAL / VAL / -).",
+        "Reference": "Lab value (Reference).",
+        "Result": "NIR prediction stored in the file (Result column).",
+        "Result - Reference": f"NIR prediction minus lab value. Rows highlighted in red differ by "
+                              f"more than {OUTLIER_FACTOR} x RMSE of all checked records - "
+                              f"worth checking for lab or typing errors.",
+        "Mahalanobis": "Mahalanobis distance from the file: how different the spectrum is from the "
+                       "calibration (higher = more different). Empty if not in the export.",
+        "Distance": "Reference of this record minus New value.",
+        "Barcode": "Barcode column from the journal.",
+        "Note": "Note column from the journal.",
+    }
+
+    def help_for(column):
+        if column in HELP:
+            return HELP[column]
+        for key in ("Reference", "Result", "Mahalanobis"):
+            if column.startswith(key + " "):
+                return HELP[key]
+        return None
+
+    class Tooltip:
+        """Small hover tooltip. Use show()/hide() directly or attach() to a widget."""
+        def __init__(self, master):
+            self.master, self.win, self.job, self.text = master, None, None, None
+
+        def attach(self, widget, text):
+            widget.bind("<Enter>", lambda e: self.schedule(text, e.x_root, e.y_root), add="+")
+            widget.bind("<Leave>", lambda e: self.hide(), add="+")
+
+        def schedule(self, text, x, y):
+            if text == self.text and (self.win or self.job):
+                return
+            self.hide()
+            self.text = text
+            self.job = self.master.after(450, lambda: self.show(text, x, y))
+
+        def show(self, text, x, y):
+            self.job = None
+            self.win = tk.Toplevel(self.master)
+            self.win.wm_overrideredirect(True)
+            self.win.wm_geometry(f"+{x + 12}+{y + 18}")
+            tk.Label(self.win, text=text, justify="left", wraplength=340, background="#ffffe8",
+                     relief="solid", borderwidth=1, padx=6, pady=4,
+                     font=("Segoe UI", 9)).pack()
+
+        def hide(self):
+            if self.job:
+                self.master.after_cancel(self.job)
+                self.job = None
+            if self.win:
+                self.win.destroy()
+                self.win = None
+            self.text = None
+
     class App(BaseTk):
         def __init__(self):
             super().__init__()
@@ -365,6 +464,8 @@ def run_gui(initial_file=None):
             self.selected = tk.StringVar(value=self.settings.get("selected_param", ""))
             self.current = None          # analysis of the selected parameter
             self.pending_win = None
+            self.tooltip = Tooltip(self)
+            self.decimal_sep = system_decimal_separator()
 
             style = ttk.Style(self)
             if "vista" in style.theme_names():
@@ -427,8 +528,10 @@ def run_gui(initial_file=None):
                      "In file", "Checked", "Unchecked", "No Reference", "Similar checked",
                      "Similar unchecked"]
             for c, h in enumerate(heads):
-                ttk.Label(self.input_grid, text=h, foreground=COLORS["muted"]).grid(
-                    row=0, column=c, sticky="w", padx=(0, 16), pady=(0, 4))
+                lbl = ttk.Label(self.input_grid, text=h, foreground=COLORS["muted"],
+                                cursor="question_arrow")
+                lbl.grid(row=0, column=c, sticky="w", padx=(0, 16), pady=(0, 4))
+                self.tooltip.attach(lbl, help_for(h))
             tols = self.settings.get("tolerances", {})
             for i, p in enumerate(self.journal.params, start=1):
                 st = self.journal.stats(p)
@@ -498,7 +601,48 @@ def run_gui(initial_file=None):
             parent.rowconfigure(0, weight=1)
             parent.columnconfigure(0, weight=1)
             tree.tag_configure("unchecked", foreground="#9a9ea5")
+            tree.tag_configure("outlier", background="#fbe3e6")
+            tree.bind("<Control-c>", lambda e: self.copy_rows(tree))
+            tree.bind("<Control-C>", lambda e: self.copy_rows(tree))
+            tree.bind("<Control-a>", lambda e: (tree.selection_set(tree.get_children("")), "break")[1])
+            menu = tk.Menu(tree, tearoff=0)
+            menu.add_command(label="Copy selected rows (Ctrl+C)", command=lambda: self.copy_rows(tree))
+            menu.add_command(label="Copy all rows", command=lambda: self.copy_rows(tree, all_rows=True))
+            menu.add_command(label="Select all (Ctrl+A)",
+                             command=lambda: tree.selection_set(tree.get_children("")))
+
+            def popup(e):
+                row = tree.identify_row(e.y)
+                if row and row not in tree.selection():
+                    tree.selection_set(row)
+                menu.tk_popup(e.x_root, e.y_root)
+            tree.bind("<Button-3>", popup)
+
+            def motion(e):
+                if tree.identify_region(e.x, e.y) == "heading":
+                    col = tree.identify_column(e.x)
+                    idx = int(col[1:]) - 1 if col.startswith("#") and col[1:].isdigit() else -1
+                    text = help_for(columns[idx]) if 0 <= idx < len(columns) else None
+                    if text:
+                        self.tooltip.schedule(text, e.x_root, e.y_root)
+                        return
+                self.tooltip.hide()
+            tree.bind("<Motion>", motion)
+            tree.bind("<Leave>", lambda e: self.tooltip.hide())
             return tree
+
+        def copy_rows(self, tree, all_rows=False):
+            """Copy rows as tab-separated text with header - pastes straight into Excel."""
+            items = tree.get_children("") if all_rows else tree.selection()
+            if not items:
+                return "break"
+            lines = ["\t".join(tree["columns"])]
+            lines += ["\t".join(localize_cell(v, self.decimal_sep) for v in tree.item(k, "values"))
+                      for k in items]
+            self.clipboard_clear()
+            self.clipboard_append("\r\n".join(lines) + "\r\n")
+            self.status.configure(text=f"Copied {len(items)} rows to the clipboard.")
+            return "break"
 
         # -- file handling ----------------------------------------------------
         def open_file(self):
@@ -600,10 +744,15 @@ def run_gui(initial_file=None):
                 sim = self.journal.similar(p, value, tol)
                 self.current = {"param": p, "value": value, "tol": tol, "records": sim}
                 n_c = sum(r.check for r in sim)
-                self.info.configure(
-                    text=f"{len(sim)} records with Reference {p} within {fmt_num(value)} ± "
-                         f"{fmt_num(tol)}:  {n_c} Check = True,  {len(sim) - n_c} Check = False"
-                         f"  (newest first)")
+                rmse = self.journal.residual_rmse(p)
+                limit = OUTLIER_FACTOR * rmse if rmse else None
+                text = (f"{len(sim)} records with Reference {p} within {fmt_num(value)} ± "
+                        f"{fmt_num(tol)}:  {n_c} Check = True,  {len(sim) - n_c} Check = False"
+                        f"  (newest first)")
+                if limit:
+                    text += (f"   |   red = |Result - Reference| > {fmt_num(limit)} "
+                             f"({OUTLIER_FACTOR} x RMSE)")
+                self.info.configure(text=text)
                 for r in sim:
                     ref, res = r.ref[p], r.result.get(p)
                     diff = res - ref if res is not None else None
@@ -611,8 +760,10 @@ def run_gui(initial_file=None):
                            fmt_num(ref), fmt_num(res, ref), fmt_num(diff, ref),
                            fmt_num(r.mahal.get(p)), fmt_num(ref - value, ref)]
                     row += [fmt_num(r.ref[q]) for q in others] + [r.barcode, r.note]
-                    self.tree.insert("", "end", values=row,
-                                     tags=() if r.check else ("unchecked",))
+                    tags = [] if r.check else ["unchecked"]
+                    if limit and diff is not None and abs(diff) > limit:
+                        tags.append("outlier")
+                    self.tree.insert("", "end", values=row, tags=tags)
             self.draw_histogram()
 
         # -- records without reference -----------------------------------------
@@ -761,7 +912,8 @@ def run_gui(initial_file=None):
                 w = csv.writer(f, delimiter=";")
                 w.writerow(self.tree["columns"])
                 for k in self.tree.get_children(""):
-                    w.writerow(self.tree.item(k, "values"))
+                    w.writerow([localize_cell(v, self.decimal_sep)
+                                for v in self.tree.item(k, "values")])
             self.status.configure(text=f"Exported {len(self.tree.get_children(''))} rows to {path}")
 
         def on_close(self):
