@@ -2,6 +2,23 @@
 
 Small Windows desktop tool for deciding whether a new NIR sample is worth adding to the calibration. It loads the instrument's journal export (`*.Journal.tsv`) and shows, for each reference parameter, how many records with a similar Reference value the calibration already has. Adding many samples with nearly the same reference value (e.g. 100 × P = 5.1) does not improve the model.
 
+![JournalChecker - P = 5.1 is already well covered in the calibration](docs/screenshots/analysis-covered.png)
+
+*Is a new sample with P = 5.1 worth adding? The calibration already has many records within ± 0.5 (blue bars), so probably not.*
+
+![JournalChecker - P = 12 falls into a sparsely covered range](docs/screenshots/analysis-gap.png)
+
+*P = 12 is sparsely covered, so the sample would help. A red row shows a record whose NIR Result is far from its lab Reference, which is worth checking.*
+
+<table>
+<tr>
+<td width="50%"><img src="docs/screenshots/help.png" alt="Built-in user manual"><br><em>Built-in user manual (F1)</em></td>
+<td width="50%"><img src="docs/screenshots/records-without-reference.png" alt="Records without Reference"><br><em>Records still waiting for lab values</em></td>
+</tr>
+</table>
+
+Screenshots use the synthetic demo journal in [`demo/`](demo/), not real measurement data.
+
 ## Download
 
 Download `JournalChecker.exe` from the **[latest release](../../releases/latest)**. It is a single portable file:
@@ -10,6 +27,10 @@ Download `JournalChecker.exe` from the **[latest release](../../releases/latest)
 - runs on 64-bit Windows 10 and 11.
 
 On first start, Windows SmartScreen may warn about an unknown publisher (the exe is not code-signed). Click *More info → Run anyway*.
+
+## Try it with demo data
+
+Open [`demo/demo.Journal.tsv`](demo/demo.Journal.tsv) in the app. It is a fully synthetic journal (random values, same column layout as a real export) created by `tools/make_demo_data.py`.
 
 ## Run from source
 
@@ -52,3 +73,7 @@ The full user manual is in [MANUAL.md](MANUAL.md). The same text is built into t
 7. **Records without Reference** lists records with no Reference value yet. Double-click one to copy its Result values into *New value*.
 
 Tolerances, the selected parameter and the last opened file are remembered in `%APPDATA%\JournalChecker\settings.json`. Decimal comma is accepted in inputs and files.
+
+## Updating the screenshots
+
+Run the **Update README screenshots** workflow in the Actions tab. It opens the app with the demo journal on Windows and commits fresh images to `docs/screenshots/`.

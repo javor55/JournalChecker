@@ -2,9 +2,13 @@
 *.tsv
 *.csv
 *.txt
+# ...except the synthetic demo journal
+!demo/demo.Journal.tsv
 # Build output
 build/
 dist/
 *.spec
 __pycache__/
 *.pyc
+# Screenshot tool scratch
+docs/screenshots/_settings/
