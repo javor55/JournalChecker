@@ -46,6 +46,13 @@ def grab(win, name):
     print("saved", path)
 
 
+def fit(win, width, height, x=20, y=20):
+    """Place a window so it fits on screen above the taskbar."""
+    sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
+    width, height = min(width, sw - x - 10), min(height, sh - y - 90)
+    win.geometry(f"{width}x{height}+{x}+{y}")
+
+
 def set_values(app, values):
     for p, (value, tol) in values.items():
         app.rows[p]["value"].set(value)
@@ -65,12 +72,12 @@ def scenes(app):
 
     def s_help():
         app.show_help()
-        app.help_win.geometry("780x700+40+20")
+        fit(app.help_win, 820, 760, 40, 20)
 
     def s_noref():
         app.help_win.destroy()
         app.show_without_reference()
-        app.pending_win.geometry("980x330+20+60")
+        fit(app.pending_win, 1000, 300, 30, 40)
 
     return [
         (lambda: app.load(DEMO), 600),
@@ -88,7 +95,7 @@ def main():
     original_mainloop = tk.Misc.mainloop
 
     def mainloop(self, *args):
-        self.geometry("1010x740+0+0")
+        fit(self, 1180, 820)
         steps = scenes(self)
 
         def run(i=0):
