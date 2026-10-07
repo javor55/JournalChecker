@@ -1,0 +1,10 @@
+# Data - never commit measurement journals
+*.tsv
+*.csv
+*.txt
+# Build output
+build/
+dist/
+*.spec
+__pycache__/
+*.pyc
