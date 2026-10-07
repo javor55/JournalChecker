@@ -1,9 +1,13 @@
 name: Build Windows exe
 
+# Every push to main builds JournalChecker.exe and publishes it as a GitHub
+# Release named after APP_VERSION in journal_checker.py (e.g. v1.4).
+# Bump APP_VERSION to create a new release; pushes without a bump update
+# the exe of the current release.
+
 on:
   push:
     branches: [main]
-    tags: ["v*"]
   workflow_dispatch:
 
 permissions:
@@ -19,20 +23,33 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Read version
+        id: ver
+        shell: bash
+        run: |
+          v=$(python -c "import re;print(re.search(r'APP_VERSION = \"(.+?)\"', open('journal_checker.py', encoding='utf-8').read()).group(1))")
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
       - name: Install build tools
         run: python -m pip install --upgrade pip pyinstaller tkinterdnd2
 
       - name: Build JournalChecker.exe
         run: python -m PyInstaller --noconfirm --onefile --windowed --name JournalChecker --collect-all tkinterdnd2 journal_checker.py
 
-      - name: Upload artifact
+      - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: JournalChecker-exe
           path: dist/JournalChecker.exe
 
-      - name: Attach exe to GitHub release (tags v*)
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Publish release v${{ steps.ver.outputs.version }}
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ steps.ver.outputs.version }}
+          name: JournalChecker ${{ steps.ver.outputs.version }}
+          target_commitish: ${{ github.sha }}
+          make_latest: true
+          body: |
+            Download **JournalChecker.exe** below - a single portable file, no install and no Python needed (64-bit Windows 10/11).
+            The user manual is built in (Help / F1) and also in [MANUAL.md](https://github.com/${{ github.repository }}/blob/main/MANUAL.md).
           files: dist/JournalChecker.exe

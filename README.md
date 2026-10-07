@@ -4,7 +4,7 @@ Small Windows desktop tool for deciding whether a new NIR sample is worth adding
 
 ## Download
 
-Get `JournalChecker.exe` from the **Releases** page (or the latest **Actions** build artifact). It is a single portable file:
+Download `JournalChecker.exe` from the **[latest release](../../releases/latest)**. It is a single portable file:
 - no install,
 - no Python needed,
 - runs on 64-bit Windows 10 and 11.
@@ -16,7 +16,9 @@ On first start, Windows SmartScreen may warn about an unknown publisher (the exe
 1. Install Python 3.9+ from python.org.
 2. Double-click `run.bat`. The first run installs `tkinterdnd2` for drag & drop. You can also run `python journal_checker.py [journal.tsv]`.
 
-To build the exe yourself, double-click `build_exe.bat`; the result is `dist\JournalChecker.exe`. Every push to `main` also builds it automatically via GitHub Actions. Pushing a tag such as `v1.3` attaches it to a release.
+To build the exe yourself, double-click `build_exe.bat`; the result is `dist\JournalChecker.exe`.
+
+Every push to `main` builds the exe with GitHub Actions and publishes it as a release named after `APP_VERSION` in `journal_checker.py`. Bump the version to create a new release; otherwise the current release's exe is updated.
 
 ## Manual
 
