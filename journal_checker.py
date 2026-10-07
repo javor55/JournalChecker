@@ -10,6 +10,7 @@ Needs only Python with tkinter. Optional: tkinterdnd2 for drag & drop.
 
 import csv
 import json
+import re
 import math
 import os
 import statistics
@@ -18,10 +19,120 @@ from datetime import datetime
 from itertools import permutations
 
 APP_NAME = "JournalChecker"
-APP_VERSION = "1.3"
+APP_VERSION = "1.4"
 
 # Result - Reference larger than this multiple of RMSE is highlighted
 OUTLIER_FACTOR = 2.5
+
+# User manual - shown in the app (Help / F1). MANUAL.md in the repository is
+# generated from this text:  python journal_checker.py --write-manual
+MANUAL = r"""# JournalChecker - User Manual
+
+## What the app is for
+
+When you add a sample to an NIR calibration, you enter its lab value (the **Reference**) for each parameter. The more samples with nearly the same Reference value the calibration already has, the less a new one brings - and adding the same value over and over (e.g. 100 samples with P = 5.1) can bias the model.
+
+JournalChecker reads the journal exported from the NIR software and shows, for each parameter, how many records with a similar Reference value are already there. You then decide yourself whether the new sample is worth entering. The app does not change the journal or the calibration - it only reads the file.
+
+## Quick start
+
+1. Start `JournalChecker.exe`.
+2. Drag & drop the journal file (`*.Journal.tsv`) onto the window, or click **Open TSV...**.
+3. In **New sample**, type the new sample's value for a parameter (e.g. P = 5.1) and check the **± Tolerance** (e.g. 0.5).
+4. Read **Similar checked** - how many calibration records already have a Reference within 4.6 - 5.6.
+5. Click the parameter name to see the distribution chart and the list of those records below.
+
+## The main window
+
+### Toolbar
+
+- **Open TSV...** (Ctrl+O) - choose a journal file. You can also drag & drop a file onto the window or onto the .exe icon.
+- **Reload (F5)** - read the same file again, e.g. after a new export. Typed values are kept.
+- **File name** - the loaded file. Hover over it to see the full path.
+- **Records without Reference** - list of records that have no lab value yet (see below).
+- **Help (F1)** - this manual.
+
+### New sample
+
+One row per parameter found in the file.
+
+- **Parameter** - click the name (or into its fields) to show its analysis below.
+- **New value** - the value of the sample you are deciding about. Use the lab value, or the NIR Result as an estimate if the lab value is not known yet. Decimal comma or point both work.
+- **± Tolerance** - how close a Reference must be to count as similar. Each parameter keeps its own tolerance, and it is remembered for next time. The first default is about 1/40 of the calibration range.
+- **Reference range (checked)** - lowest and highest Reference among records used in the calibration. A new value outside this range extends the calibration.
+- **In file** - number of all records in the file.
+- **Checked** - records with a Reference value and Check = True, i.e. used in the calibration.
+- **Unchecked** - records with a Reference value but Check = False, i.e. not used.
+- **No Reference** - records without a lab value for this parameter.
+- **Similar checked** - records with Check = True and Reference within New value ± Tolerance. This is the main number for the decision.
+- **Similar unchecked** - the same, but with Check = False.
+- **Clear values** - empties all New value fields.
+
+### Analysis
+
+Shows the parameter selected in New sample.
+
+- **Summary line** - how many similar records were found, split by Check = True / False.
+- **Chart** - distribution of the Reference values used in the calibration (Check = True). Blue bars and the light-blue band are inside New value ± Tolerance, the red line is the new value. Tall bars mean values that are already well covered; gaps are where new samples help most.
+- **Record list** - the similar records, newest first. Click a column header to sort.
+- **Grey rows** - Check = False (not in the calibration).
+- **Red rows** - the NIR Result differs from the Reference much more than usual (more than 2.5 x RMSE of all checked records). Worth checking for a lab or typing error.
+- **Export list to CSV...** - saves the list, e.g. for Excel.
+
+Columns of the record list:
+
+- **ROW**, **Date**, **Check**, **Use**, **Barcode**, **Note** - copied from the journal.
+- **Reference <param>** - the lab value.
+- **Result <param>** - the NIR prediction stored in the file at the time of measurement. Your NIR software may show a different, recalculated value.
+- **Result - Reference** - prediction error of that record.
+- **Mahalanobis <param>** - how different the spectrum is from the calibration (higher = more different). Shown only if the export contains it.
+- **Distance** - Reference of the record minus New value. Sort by it to see the closest records.
+- **Reference <other parameters>** - lab values of the other parameters of the same record.
+
+### Status bar
+
+Shows how many records were loaded, which parameters were found, how the Result values were matched to parameters, and whether Mahalanobis values are available.
+
+## How to read the numbers
+
+The app does not make the decision - these are only guidelines:
+
+- **Similar checked is high** (e.g. 10 or more) and Mahalanobis is low - the sample probably adds little for that parameter.
+- **Similar checked is 0 or low**, or the value is **outside the Reference range** - the sample fills a gap or extends the range.
+- **Mahalanobis is high** (above the limit used in your NIR software) - the spectrum is unusual, so the sample can be valuable even if its Reference value is common.
+- A sample can be common in one parameter and rare in another. Check every parameter you have a value for.
+
+## Records without Reference
+
+The **Records without Reference** button opens a list of records that have no lab value for any parameter yet - typically the newest measurements waiting for the lab. It shows their Result and Mahalanobis values. Double-click a row to copy its Result values into New value, so you can check coverage before the lab results arrive.
+
+## Copying to Excel
+
+In any list, select rows and press **Ctrl+C**, or right-click and choose **Copy selected rows** / **Copy all rows**. Rows are copied with the header and paste straight into Excel. Numbers use the decimal separator from your Windows regional settings. **Ctrl+A** selects all rows.
+
+## How the file is read
+
+- The file must be the tab-separated journal export with a **Check** column.
+- **Parameters** are the numeric columns between **Reference** and **Begin** (e.g. Moisture, P, FFA). Any names and any number of parameters work. Empty columns (e.g. Protein with no values) are hidden until they get a value. Product, Composition and Mahalanobis columns are ignored.
+- The **Reference** column contains the same values as the parameter columns, so the parameter columns are used.
+- **Result** values have no names in the file. The app matches each position to a parameter by comparing them with the Reference values. This needs at least 3 records with both values; otherwise Result stays empty and the status bar shows a warning.
+- **Mahalanobis** is taken from the first source that has a value: a column `Mahalanobis_<param>`, the list in the `Mahalanobis` column, or extra values in `Result` after the predictions.
+- Text encodings UTF-8 and Windows-1250 are supported.
+
+## Settings and shortcuts
+
+- Tolerances, the selected parameter and the last opened file are saved in `%APPDATA%\JournalChecker\settings.json` and restored on the next start.
+- **Ctrl+O** open, **F5** reload, **F1** help, **Ctrl+C** copy rows, **Ctrl+A** select all rows.
+
+## Troubleshooting
+
+- **"Column 'Check' not found"** - the file is not a journal export, or the header row is missing.
+- **A parameter is missing** - the column has no numeric value in the file, or it is not between Reference and Begin.
+- **Result column is empty** - fewer than 3 records have both Result and Reference for that parameter.
+- **Mahalanobis column is empty** - the export does not contain Mahalanobis values. Try exporting the journal with recalculated results from your NIR software.
+- **Drag & drop does not work** - when running from source, install it with `pip install tkinterdnd2` (run.bat does this automatically). The .exe already includes it.
+- **Windows SmartScreen warning** - the .exe is not code-signed. Click More info, then Run anyway.
+"""
 
 # Columns that are never reference parameters
 NON_PARAM_COLUMNS = {"product", "composition", "recipe", "images", "begin", "end"}
@@ -409,6 +520,25 @@ def run_gui(initial_file=None):
         "Barcode": "Barcode column from the journal.",
         "Note": "Note column from the journal.",
     }
+    TIPS = {
+        "open": "Open a journal export (*.tsv) - Ctrl+O. You can also drag & drop the file "
+                "onto this window or onto the .exe icon.",
+        "reload": "Read the same file again, e.g. after a new export - F5. Typed values are kept.",
+        "noref": "Records that have no lab (Reference) value yet - usually the newest "
+                 "measurements. Double-click one there to use its Result as New value.",
+        "help": "User manual - what the app does and what every column means (F1).",
+        "param": "Click to show the analysis of this parameter below.",
+        "clear": "Empty all New value fields.",
+        "export": "Save the record list below as a CSV file (opens in Excel).",
+        "chart": "Distribution of Reference values used in the calibration (Check = True). "
+                 "Blue bars / light-blue band = within New value ± Tolerance, red line = "
+                 "New value. Tall bars are well covered; gaps are where new samples help most.",
+        "info": "Summary of the similar records listed below. Grey rows = Check = False, "
+                "red rows = Result differs from Reference much more than usual. "
+                "Right-click or Ctrl+C to copy rows.",
+        "status": "What was found in the file: parameters, which Result position belongs to "
+                  "which parameter, and whether Mahalanobis values are available.",
+    }
 
     def help_for(column):
         if column in HELP:
@@ -418,13 +548,56 @@ def run_gui(initial_file=None):
                 return HELP[key]
         return None
 
+    def render_markdown(text, md):
+        """Very small Markdown renderer for the manual (headings, bullets, bold, code)."""
+        text.tag_configure("h1", font=("Segoe UI", 17, "bold"), spacing3=8)
+        text.tag_configure("h2", font=("Segoe UI", 13, "bold"), spacing1=14, spacing3=4,
+                           foreground="#1f4e79")
+        text.tag_configure("h3", font=("Segoe UI", 11, "bold"), spacing1=8, spacing3=2)
+        text.tag_configure("item", lmargin1=12, lmargin2=30, spacing1=2)
+        text.tag_configure("bold", font=("Segoe UI", 10, "bold"))
+        text.tag_configure("code", font=("Consolas", 10), background="#f0f1f3")
+        token = re.compile(r"(\*\*.+?\*\*|`.+?`)")
+
+        def inline(line, base):
+            for part in token.split(line):
+                if part.startswith("**") and part.endswith("**") and len(part) > 4:
+                    text.insert("end", part[2:-2], (base, "bold"))
+                elif part.startswith("`") and part.endswith("`") and len(part) > 2:
+                    text.insert("end", part[1:-1], (base, "code"))
+                elif part:
+                    text.insert("end", part, (base,))
+
+        for line in md.splitlines():
+            for prefix, tag in (("### ", "h3"), ("## ", "h2"), ("# ", "h1")):
+                if line.startswith(prefix):
+                    text.insert("end", line[len(prefix):] + "\n", tag)
+                    break
+            else:
+                m = re.match(r"(\d+\.|-)\s+(.*)", line)
+                if m:
+                    bullet = "\u2022" if m.group(1) == "-" else m.group(1)
+                    text.insert("end", bullet + "  ", "item")
+                    inline(m.group(2), "item")
+                    text.insert("end", "\n", "item")
+                elif line.strip():
+                    inline(line, "p")
+                    text.insert("end", "\n")
+                else:
+                    text.insert("end", "\n")
+
     class Tooltip:
         """Small hover tooltip. Use show()/hide() directly or attach() to a widget."""
         def __init__(self, master):
             self.master, self.win, self.job, self.text = master, None, None, None
 
         def attach(self, widget, text):
-            widget.bind("<Enter>", lambda e: self.schedule(text, e.x_root, e.y_root), add="+")
+            """text may be a string or a function returning the current text."""
+            def enter(e):
+                t = text() if callable(text) else text
+                if t:
+                    self.schedule(t, e.x_root, e.y_root)
+            widget.bind("<Enter>", enter, add="+")
             widget.bind("<Leave>", lambda e: self.hide(), add="+")
 
         def schedule(self, text, x, y):
@@ -487,6 +660,8 @@ def run_gui(initial_file=None):
 
             self.bind("<Control-o>", lambda e: self.open_file())
             self.bind("<F5>", lambda e: self.reload())
+            self.bind("<F1>", lambda e: self.show_help())
+            self.help_win = None
             self.protocol("WM_DELETE_WINDOW", self.on_close)
 
             start = initial_file or self.settings.get("last_file")
@@ -497,15 +672,25 @@ def run_gui(initial_file=None):
         def _build_toolbar(self):
             bar = ttk.Frame(self, padding=(10, 8))
             bar.pack(fill="x")
-            ttk.Button(bar, text="Open TSV...", command=self.open_file).pack(side="left")
-            ttk.Button(bar, text="Reload (F5)", command=self.reload).pack(side="left", padx=(6, 0))
+            b_open = ttk.Button(bar, text="Open TSV...", command=self.open_file)
+            b_open.pack(side="left")
+            b_reload = ttk.Button(bar, text="Reload (F5)", command=self.reload)
+            b_reload.pack(side="left", padx=(6, 0))
+            self.tooltip.attach(b_open, TIPS["open"])
+            self.tooltip.attach(b_reload, TIPS["reload"])
             hint = ("No file loaded - open or drag & drop a .tsv file here" if DND_FILES
                     else "No file loaded (drag & drop needs: pip install tkinterdnd2)")
             self.file_label = ttk.Label(bar, text=hint, foreground=COLORS["muted"])
             self.file_label.pack(side="left", padx=12)
+            self.tooltip.attach(self.file_label,
+                                lambda: self.journal.path if self.journal else TIPS["open"])
+            b_help = ttk.Button(bar, text="Help (F1)", command=self.show_help)
+            b_help.pack(side="right")
+            self.tooltip.attach(b_help, TIPS["help"])
             self.noref_button = ttk.Button(bar, text="Records without Reference",
                                            command=self.show_without_reference, state="disabled")
-            self.noref_button.pack(side="right")
+            self.noref_button.pack(side="right", padx=(0, 6))
+            self.tooltip.attach(self.noref_button, TIPS["noref"])
 
         def _build_input_panel(self):
             box = ttk.LabelFrame(self, text=" New sample ", padding=10)
@@ -518,7 +703,9 @@ def run_gui(initial_file=None):
                       text="Select a parameter to see its analysis below. "
                            "Checked / Unchecked = records with a Reference value and Check = "
                            "True / False.").pack(side="left")
-            ttk.Button(bottom, text="Clear values", command=self.clear_values).pack(side="right")
+            b_clear = ttk.Button(bottom, text="Clear values", command=self.clear_values)
+            b_clear.pack(side="right")
+            self.tooltip.attach(b_clear, TIPS["clear"])
 
         def _rebuild_input_grid(self):
             for w in self.input_grid.winfo_children():
@@ -541,19 +728,25 @@ def run_gui(initial_file=None):
                 rb = ttk.Radiobutton(self.input_grid, text=p, value=p, variable=self.selected,
                                      style="Param.TRadiobutton", command=self.refresh_analysis)
                 rb.grid(row=i, column=0, sticky="w", padx=(0, 16), pady=2)
+                self.tooltip.attach(rb, TIPS["param"])
                 e1 = ttk.Entry(self.input_grid, textvariable=value_var, width=12)
                 e1.grid(row=i, column=1, sticky="w", padx=(0, 16))
                 e2 = ttk.Entry(self.input_grid, textvariable=tol_var, width=10)
                 e2.grid(row=i, column=2, sticky="w", padx=(0, 16))
+                self.tooltip.attach(e1, help_for("New value"))
+                self.tooltip.attach(e2, help_for("± Tolerance"))
                 rng = f"{fmt_num(st['min'])} - {fmt_num(st['max'])}" if st["min"] is not None else "-"
                 cells = [rng, st["in_file"], st["checked"], st["unchecked"], st["no_ref"]]
                 for c, text in enumerate(cells, start=3):
-                    ttk.Label(self.input_grid, text=str(text)).grid(
-                        row=i, column=c, sticky="w", padx=(0, 16))
+                    cell = ttk.Label(self.input_grid, text=str(text))
+                    cell.grid(row=i, column=c, sticky="w", padx=(0, 16))
+                    self.tooltip.attach(cell, help_for(heads[c]))
                 sim_c = ttk.Label(self.input_grid, text="", style="Title.TLabel")
                 sim_c.grid(row=i, column=8, sticky="w", padx=(0, 16))
                 sim_u = ttk.Label(self.input_grid, text="")
                 sim_u.grid(row=i, column=9, sticky="w")
+                self.tooltip.attach(sim_c, help_for("Similar checked"))
+                self.tooltip.attach(sim_u, help_for("Similar unchecked"))
                 for e in (e1, e2):
                     e.bind("<KeyRelease>", lambda ev: self.update_counts())
                     e.bind("<FocusIn>", lambda ev, p=p: self.select(p))
@@ -565,6 +758,7 @@ def run_gui(initial_file=None):
             self.status = ttk.Label(self, text="", foreground=COLORS["muted"],
                                     padding=(10, 0, 10, 6))
             self.status.pack(side="bottom", fill="x")
+            self.tooltip.attach(self.status, TIPS["status"])
 
         def _build_analysis_panel(self):
             frame = ttk.LabelFrame(self, text=" Analysis ", padding=8)
@@ -574,10 +768,14 @@ def run_gui(initial_file=None):
             top.pack(fill="x")
             self.info = ttk.Label(top, text="")
             self.info.pack(side="left")
-            ttk.Button(top, text="Export list to CSV...", command=self.export).pack(side="right")
+            self.tooltip.attach(self.info, TIPS["info"])
+            b_export = ttk.Button(top, text="Export list to CSV...", command=self.export)
+            b_export.pack(side="right")
+            self.tooltip.attach(b_export, TIPS["export"])
             self.canvas = tk.Canvas(frame, height=165, background="white", highlightthickness=0)
             self.canvas.pack(fill="x", pady=(6, 6))
             self.canvas.bind("<Configure>", lambda e: self.draw_histogram())
+            self.tooltip.attach(self.canvas, TIPS["chart"])
             self.tree_wrap = ttk.Frame(frame)
             self.tree_wrap.pack(fill="both", expand=True)
             self.tree = None
@@ -766,6 +964,25 @@ def run_gui(initial_file=None):
                     self.tree.insert("", "end", values=row, tags=tags)
             self.draw_histogram()
 
+        # -- help -----------------------------------------------------------------
+        def show_help(self):
+            if self.help_win and self.help_win.winfo_exists():
+                self.help_win.lift()
+                return
+            win = tk.Toplevel(self)
+            win.title(f"{APP_NAME} {APP_VERSION} - Help")
+            win.geometry("760x700")
+            self.help_win = win
+            text = tk.Text(win, wrap="word", padx=18, pady=14, borderwidth=0,
+                           font=("Segoe UI", 10), background="white", cursor="arrow")
+            sb = ttk.Scrollbar(win, orient="vertical", command=text.yview)
+            text.configure(yscrollcommand=sb.set)
+            sb.pack(side="right", fill="y")
+            text.pack(side="left", fill="both", expand=True)
+            render_markdown(text, MANUAL)
+            text.configure(state="disabled")
+            win.bind("<Escape>", lambda e: win.destroy())
+
         # -- records without reference -----------------------------------------
         def show_without_reference(self):
             if not self.journal:
@@ -927,4 +1144,10 @@ def run_gui(initial_file=None):
 
 
 if __name__ == "__main__":
-    run_gui(sys.argv[1] if len(sys.argv) > 1 else None)
+    if len(sys.argv) > 1 and sys.argv[1] == "--write-manual":
+        out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "MANUAL.md")
+        with open(out, "w", encoding="utf-8", newline="\n") as f:
+            f.write(MANUAL)
+        print(f"Written {out}")
+    else:
+        run_gui(sys.argv[1] if len(sys.argv) > 1 else None)

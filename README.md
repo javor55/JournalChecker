@@ -18,6 +18,10 @@ On first start, Windows SmartScreen may warn about an unknown publisher (the exe
 
 To build the exe yourself, double-click `build_exe.bat`; the result is `dist\JournalChecker.exe`. Every push to `main` also builds it automatically via GitHub Actions. Pushing a tag such as `v1.3` attaches it to a release.
 
+## Manual
+
+The full user manual is in [MANUAL.md](MANUAL.md). The same text is built into the app: click **Help (F1)**. Every button, field and column also explains itself when you hover the mouse over it.
+
 ## How it works
 
 1. **Load a journal** in one of three ways: **Open TSV...**, drag & drop the file onto the window, or drop it onto the .exe icon.
